@@ -22,6 +22,9 @@ func main() {
 	}
 	defer conn.Close()
 
+	// TODO listen on conn state changes and re-register watches
+	// https://github.com/grpc/grpc-go/issues/1245
+
 	client := pb.NewPushdbServiceClient(conn)
 	stream, err := client.Watch(context.Background(), &pb.RegisterWatchRequest{KeyName: "test"})
 	if err != nil {
