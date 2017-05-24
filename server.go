@@ -11,21 +11,28 @@ import (
 	"sync"
 	"time"
 
+	"flag"
+	"os"
+
 	"github.com/lib/pq"
 	pb "github.com/lukaszx0/pushdb/proto"
 	"google.golang.org/grpc"
 )
 
 const (
-	port          = ":50051"
-	pg_chann      = "key_change"
-	ping_interval = 1 * time.Second
+	pg_chann = "key_change"
 )
 
 type server struct {
+	config   *config
 	listener *pq.Listener
 	watches  map[string]pb.PushdbService_WatchServer
 	mu       sync.Mutex
+}
+
+type config struct {
+	db            string
+	ping_interval time.Duration
 }
 
 type KeyRow struct {
@@ -42,18 +49,17 @@ type KeyChangeEvent struct {
 func (s *server) start() {
 	s.watches = make(map[string]pb.PushdbService_WatchServer)
 
-	var conninfo string = "dbname=pushdb sslmode=disable"
-
-	_, err := sql.Open("postgres", conninfo)
+	_, err := sql.Open("postgres", s.config.db)
 	if err != nil {
 		panic(err)
 	}
 
-	listener := pq.NewListener(conninfo, 10*time.Second, time.Minute, func(ev pq.ListenerEventType, err error) {
+	listener := pq.NewListener(s.config.db, 10*time.Second, time.Minute, func(ev pq.ListenerEventType, err error) {
 		if err != nil {
 			fmt.Println(err.Error())
 		}
 	})
+
 	err = listener.Listen(pg_chann)
 	if err != nil {
 		panic(err)
@@ -78,7 +84,7 @@ func (s *server) start() {
 				if err != nil {
 					s.unregisterWatch(keyChangeEvent.Data.Name)
 				}
-			case <-time.After(ping_interval):
+			case <-time.After(s.config.ping_interval):
 				go func() {
 					listener.Ping()
 				}()
@@ -115,16 +121,29 @@ func (s *server) unregisterWatch(name string) {
 }
 
 func main() {
-	lis, err := net.Listen("tcp", port)
+	addr := flag.String("addr", ":5005", "address on which server is listening")
+	db := flag.String("db", "", "database url (eg.: postgresql://<user>@<host>:<port>/<database>?sslmode=disable) [required]")
+	ping_interval := flag.Int("ping", 1, "database ping inverval (sec)")
+
+	flag.Parse()
+	if *db == "" {
+		fmt.Fprint(os.Stderr, "missing required -db argument\n\n")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatalf("failed to listen: %v\n", err)
 	}
+	log.Printf("grpc server listening on: %s\n", *addr)
 
-	s := grpc.NewServer()
-	srv := &server{}
+	srv := &server{config: &config{db: *db, ping_interval: time.Duration(*ping_interval) * time.Second}}
 	srv.start()
-	pb.RegisterPushdbServiceServer(s, srv)
-	if err := s.Serve(lis); err != nil {
+
+	grpc := grpc.NewServer()
+	pb.RegisterPushdbServiceServer(grpc, srv)
+	if err := grpc.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v\n", err)
 	}
 }
