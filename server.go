@@ -56,7 +56,7 @@ func (s *server) start() {
 
 	listener := pq.NewListener(s.config.db, 10*time.Second, time.Minute, func(ev pq.ListenerEventType, err error) {
 		if err != nil {
-			fmt.Println(err.Error())
+			log.Println(err.Error())
 		}
 	})
 
@@ -69,11 +69,11 @@ func (s *server) start() {
 		for {
 			select {
 			case n := <-listener.Notify:
-				fmt.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
+				log.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
 				var keyChangeEvent KeyChangeEvent
 				err := json.Unmarshal([]byte(n.Extra), &keyChangeEvent)
 				if err != nil {
-					fmt.Println(err.Error())
+					log.Println(err.Error())
 					return
 				}
 				stream, ok := s.watches[keyChangeEvent.Data.Name]
@@ -127,7 +127,7 @@ func main() {
 
 	flag.Parse()
 	if *db == "" {
-		fmt.Fprint(os.Stderr, "missing required -db argument\n\n")
+		fmt.Printf("missing required -db argument\n\n")
 		flag.Usage()
 		os.Exit(1)
 	}
