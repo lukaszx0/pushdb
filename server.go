@@ -100,14 +100,15 @@ func (s *server) Watch(req *pb.RegisterWatchRequest, stream pb.PushdbService_Wat
 
 func (s *server) registerNewWatch(name string, stream pb.PushdbService_WatchServer) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	_, ok := s.watches[name]
 	if ok {
 		// watch already exists
 		return errors.New("watch already exists")
 	}
 	s.watches[name] = stream
+	s.mu.Unlock()
 
+	// Block until stream is closed
 	select {
 	case <-stream.Context().Done():
 		return nil
