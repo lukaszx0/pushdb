@@ -123,7 +123,7 @@ func (s *server) unregisterWatch(name string) {
 
 func main() {
 	addr := flag.String("addr", ":5005", "address on which server is listening")
-	db := flag.String("db", "", "database url (eg.: postgresql://<user>@<host>:<port>/<database>?sslmode=disable) [required]")
+	db := flag.String("db", "", "database url (eg.: postgres://<user>@<host>:<port>/<database>?sslmode=disable) [required]")
 	ping_interval := flag.Int("ping", 1, "database ping inverval (sec)")
 
 	flag.Parse()
