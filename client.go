@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	serverAddr = "localhost:50051"
+	serverAddr = "localhost:5005"
 )
 
 func main() {
