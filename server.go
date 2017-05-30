@@ -18,6 +18,8 @@ import (
 	pb "github.com/lukaszx0/pushdb/proto"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -156,7 +158,23 @@ func (s *server) Set(ctx context.Context, req *pb.SetRequest) (*pb.SetResponse, 
 }
 
 func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
-	return nil, nil
+	row := s.db.QueryRow(`SELECT value, version FROM keys WHERE name = $1`, req.GetName())
+
+	var val []byte
+	var ver int32
+	err := row.Scan(&val, &ver)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "key `%s` not found", req.GetName())
+	}
+
+	var valpb pb.Value
+	proto.Unmarshal(val, &valpb)
+
+	return &pb.GetResponse{Key: &pb.Key{
+		Name:    req.GetName(),
+		Value:   &valpb,
+		Version: ver,
+	}}, nil
 }
 
 func (s *server) Watch(req *pb.WatchRequest, stream pb.PushdbService_WatchServer) error {
