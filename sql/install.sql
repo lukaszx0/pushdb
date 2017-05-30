@@ -2,7 +2,8 @@
 CREATE TABLE keys (
     id SERIAL,
     name TEXT UNIQUE,
-    value TEXT
+    value BYTEA,
+    version INT DEFAULT 1
 );
 
 -- Function sending notification on key_change channel
@@ -16,7 +17,7 @@ DECLARE
         ELSE
             payload = json_build_object(
                 'action',TG_OP,
-                'row', row_to_json(NEW));
+                'key', row_to_json(NEW));
         END IF;
         PERFORM pg_notify('key_change', payload::text);
         -- Result is ignored since this is an AFTER trigger

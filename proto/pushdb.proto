@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package pushdb;
 
-import "google/protobuf/empty.proto";
-
 message Value {
   enum Type {
     DOUBLE = 0;
@@ -25,7 +23,6 @@ message Key {
   string name = 1;
   Value value = 2;
   int32 version = 3;
-  int32 generation = 4;
 }
 
 message SetRequest {

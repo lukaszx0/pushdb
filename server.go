@@ -13,7 +13,6 @@ import (
 	"flag"
 	"os"
 
-	"bytes"
 	"github.com/golang/protobuf/proto"
 	"github.com/lib/pq"
 	pb "github.com/lukaszx0/pushdb/proto"
@@ -69,40 +68,36 @@ func (s *server) start() {
 		panic(err)
 	}
 
-	go func() {
-		for {
-			select {
-			case n := <-listener.Notify:
-				log.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
-				var keyChangeEvent KeyChangeEvent
-				err := json.Unmarshal([]byte(n.Extra), &keyChangeEvent)
-				if err != nil {
-					log.Println(err.Error())
-					return
-				}
-				stream, ok := s.watches[keyChangeEvent.Data.Name]
-				if !ok {
-					return
-				}
-				err = stream.Send(&pb.WatchUpdateResponse{Data: keyChangeEvent.Data.Value})
-				if err != nil {
-					s.unregisterWatch(keyChangeEvent.Data.Name)
-				}
-			case <-time.After(s.config.ping_interval):
-				go func() {
-					listener.Ping()
-				}()
-			}
+	//go func() {
+	//	for {
+	//		select {
+	//		case n := <-listener.Notify:
+	//			log.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
+	//			var keyChangeEvent KeyChangeEvent
+	//			err := json.Unmarshal([]byte(n.Extra), &keyChangeEvent)
+	//			if err != nil {
+	//				log.Println(err.Error())
+	//				return
+	//			}
+	//			stream, ok := s.watches[keyChangeEvent.Data.Name]
+	//			if !ok {
+	//				return
+	//			}
+	//			err = stream.Send(&pb.WatchUpdateResponse{Data: keyChangeEvent.Data.Value})
+	//			if err != nil {
+	//				s.unregisterWatch(keyChangeEvent.Data.Name)
+	//			}
+	//		case <-time.After(s.config.ping_interval):
+	//			go func() {
+	//				listener.Ping()
+	//			}()
+	//		}
 }
 
 func (s *server) Set(ctx context.Context, req *pb.SetRequest) (*pb.SetResponse, error) {
 	key := req.GetKey()
-	if key.GetVersion() < 1 {
-		return nil, errors.New("version must be greater or equal 1")
-	}
-
-	if key.GetGeneration() > 0 {
-		return nil, errors.New("generation must not be set")
+	if key.GetVersion() < 0 {
+		return nil, errors.New("version must be greater than zero")
 	}
 
 	val, err := proto.Marshal(key.GetValue())
@@ -115,12 +110,15 @@ func (s *server) Set(ctx context.Context, req *pb.SetRequest) (*pb.SetResponse, 
 		return nil, err
 	}
 
-	row := txn.QueryRow(`SELECT id, value, generation FROM keys WHERE name = $1 AND version = $2 FOR UPDATE`, key.GetName(), key.GetVersion())
-	var id int
-	var oldval []byte
-	var generation int
-	err = row.Scan(&id, &oldval, &generation)
+	row := txn.QueryRow(`SELECT id, version FROM keys WHERE name = $1 FOR UPDATE`, key.GetName())
+	var id, version int
+	err = row.Scan(&id, &version)
 	if err == sql.ErrNoRows {
+		if key.GetVersion() != 0 {
+			txn.Rollback()
+			return nil, errors.New("version mismatch")
+		}
+
 		row, err := txn.Exec(`INSERT INTO keys (name, value) VALUES($1, $2)`, key.GetName(), val)
 		if err != nil {
 			txn.Rollback()
@@ -129,33 +127,24 @@ func (s *server) Set(ctx context.Context, req *pb.SetRequest) (*pb.SetResponse, 
 		log.Printf("created new key (req %v, id %v)\n", req, row)
 		txn.Commit()
 
-		key.Generation = 1
-		key.Version = 1
 		return &pb.SetResponse{Key: key}, nil
 	} else if err != nil {
+		txn.Rollback()
+		log.Printf("unexpected sql error (err: %v)", err)
 		return nil, err
 	}
 
-	if bytes.Compare(oldval, val) == 0 {
-		log.Printf("value did not change (req %v, row %d)\n", req, id)
-		res, err := txn.Exec(`UPDATE keys SET generation = generation + 1 WHERE id = $1`, id)
-		rows, err := res.RowsAffected()
-		// TODO: sanity check res.RowsAffected()
-		log.Printf("affected: %v, err: %v", rows, err)
-		if err != nil {
-			return nil, err
-		}
-		txn.Commit()
-		key.Generation = int32(generation) + 1
-		return &pb.SetResponse{Key: key}, nil
-	}
-
-	res, err := txn.Exec(`UPDATE keys SET value = $2, version = version + 1, generation = generation + 1 WHERE id = $1`, id, val)
+	res, err := txn.Exec(`UPDATE keys SET value = $3, version = version + 1 WHERE id = $1 AND version = $2`, id, key.GetVersion(), val)
 	if err != nil {
 		txn.Rollback()
+		log.Printf("update failed (err: %v)\n", err)
 		return nil, err
 	}
-	log.Printf("res: %v)\n", res)
+
+	if rows, _ := res.RowsAffected(); rows != 1 {
+		txn.Rollback()
+		return nil, errors.New("version mismatch")
+	}
 
 	err = txn.Commit()
 	if err != nil {
@@ -163,7 +152,6 @@ func (s *server) Set(ctx context.Context, req *pb.SetRequest) (*pb.SetResponse, 
 		return nil, err
 	}
 	key.Version = key.Version + 1
-	key.Generation = int32(generation) + 1
 	return &pb.SetResponse{Key: key}, nil
 }
 
