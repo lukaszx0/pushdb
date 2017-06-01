@@ -13,6 +13,9 @@ import (
 	"flag"
 	"os"
 
+	"encoding/hex"
+	"encoding/json"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/lib/pq"
 	pb "github.com/lukaszx0/pushdb/proto"
@@ -40,14 +43,14 @@ type config struct {
 }
 
 type KeyRow struct {
-	Id    int64  `json:"id"`
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	Name    string `json:name`
+	Value   string `json:value`
+	Version int32  `json:version`
 }
 
 type KeyChangeEvent struct {
 	Action string `json:"action"`
-	Data   KeyRow `json:"row"`
+	KeyRow KeyRow `json:"key_row"`
 }
 
 func (s *server) start() {
@@ -70,30 +73,51 @@ func (s *server) start() {
 		panic(err)
 	}
 
-	//go func() {
-	//	for {
-	//		select {
-	//		case n := <-listener.Notify:
-	//			log.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
-	//			var keyChangeEvent KeyChangeEvent
-	//			err := json.Unmarshal([]byte(n.Extra), &keyChangeEvent)
-	//			if err != nil {
-	//				log.Println(err.Error())
-	//				return
-	//			}
-	//			stream, ok := s.watches[keyChangeEvent.Data.Name]
-	//			if !ok {
-	//				return
-	//			}
-	//			err = stream.Send(&pb.WatchUpdateResponse{Data: keyChangeEvent.Data.Value})
-	//			if err != nil {
-	//				s.unregisterWatch(keyChangeEvent.Data.Name)
-	//			}
-	//		case <-time.After(s.config.ping_interval):
-	//			go func() {
-	//				listener.Ping()
-	//			}()
-	//		}
+	go func() {
+		for {
+			select {
+			case n := <-listener.Notify:
+				log.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
+				key, _ := s.jsonKeyToPbKey(n.Extra)
+				log.Printf("key: %v", key)
+				// TODO: push watch response to registered clients
+			case <-time.After(s.config.ping_interval):
+				go func() {
+					listener.Ping()
+				}()
+			}
+		}
+	}()
+}
+
+func (s *server) jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
+	var keyChangeEvent KeyChangeEvent
+	err := json.Unmarshal([]byte(jsonStr), &keyChangeEvent)
+	if err != nil {
+		log.Println(err.Error())
+		return nil, err
+	}
+
+	jsonKey := keyChangeEvent.KeyRow
+
+	// Decode hex string (strip off `\x` from the beginning of the string)
+	valueBytes, err := hex.DecodeString(string(jsonKey.Value[2:]))
+	if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal bytes into proto struct
+	valueProto := &pb.Value{}
+	err = proto.Unmarshal(valueBytes, valueProto)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pb.Key{
+		Name:    jsonKey.Name,
+		Value:   valueProto,
+		Version: jsonKey.Version,
+	}, nil
 }
 
 func (s *server) Set(ctx context.Context, req *pb.SetRequest) (*pb.SetResponse, error) {

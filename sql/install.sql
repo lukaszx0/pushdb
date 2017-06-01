@@ -17,7 +17,7 @@ DECLARE
         ELSE
             payload = json_build_object(
                 'action',TG_OP,
-                'key', row_to_json(NEW));
+                'key_row', row_to_json(NEW));
         END IF;
         PERFORM pg_notify('key_change', payload::text);
         -- Result is ignored since this is an AFTER trigger
