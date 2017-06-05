@@ -91,7 +91,7 @@ func (s *server) start() {
 			select {
 			case n := <-listener.Notify:
 				log.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
-				key, _ := s.jsonKeyToPbKey(n.Extra)
+				key, _ := jsonKeyToPbKey(n.Extra)
 				s.mu.Lock()
 				sessions, ok := s.keys[key.GetName()]
 				if !ok {
@@ -115,7 +115,7 @@ func (s *server) start() {
 	}()
 }
 
-func (s *server) jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
+func jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
 	var keyChangeEvent KeyChangeEvent
 	err := json.Unmarshal([]byte(jsonStr), &keyChangeEvent)
 	if err != nil {
