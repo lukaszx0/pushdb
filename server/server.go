@@ -211,7 +211,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 }
 
 func (s *server) Watch(req *pb.WatchRequest, stream pb.PushdbService_WatchServer) error {
-	session, err := s.openSession(req.Keys)
+	session, err := s.openSession(req.GetClientId(), req.GetKeys())
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to create new session")
 	}
@@ -232,9 +232,9 @@ func (s *server) Watch(req *pb.WatchRequest, stream pb.PushdbService_WatchServer
 	}
 }
 
-func (s *server) openSession(keys []string) (*session, error) {
+func (s *server) openSession(clientId string, keys []string) (*session, error) {
 	// TODO make it unbuffered?
-	newSession := &session{keys: keys, sessionChan: make(chan *pb.Key, 1)}
+	newSession := &session{id: clientId, keys: keys, sessionChan: make(chan *pb.Key, 1)}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[newSession] = struct{}{}

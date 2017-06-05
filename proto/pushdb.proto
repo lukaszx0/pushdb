@@ -43,7 +43,7 @@ message GetResponse {
 }
 
 message WatchRequest {
-  string client_uuid = 1;
+  string client_id = 1;
   repeated string keys = 2;
 }
 
