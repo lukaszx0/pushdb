@@ -33,13 +33,25 @@ type server struct {
 	db       *sql.DB
 	config   *config
 	listener *pq.Listener
-	watches  map[string]pb.PushdbService_WatchServer
-	mu       sync.Mutex
+	// Hash set of client sessions
+	sessions map[*session]struct{}
+	// Key to sessions index
+	keys map[string]map[*session]struct{}
+	mu   sync.Mutex
 }
 
 type config struct {
 	db            string
 	ping_interval time.Duration
+}
+
+type session struct {
+	// Client identifier
+	id string
+	// Keys watched by client
+	keys []string
+	// Channnel to which key change notifications are pushed
+	sessionChan chan *pb.Key
 }
 
 type KeyRow struct {
@@ -54,8 +66,9 @@ type KeyChangeEvent struct {
 }
 
 func (s *server) start() {
-	s.watches = make(map[string]pb.PushdbService_WatchServer)
-
+	// TODO: move me to server.New method
+	s.sessions = make(map[*session]struct{})
+	s.keys = make(map[string]map[*session]struct{})
 	var err error
 	s.db, err = sql.Open("postgres", s.config.db)
 	if err != nil {
@@ -79,8 +92,20 @@ func (s *server) start() {
 			case n := <-listener.Notify:
 				log.Printf("pid=%d chann=%s extra=%s", n.BePid, n.Channel, n.Extra)
 				key, _ := s.jsonKeyToPbKey(n.Extra)
-				log.Printf("key: %v", key)
-				// TODO: push watch response to registered clients
+				s.mu.Lock()
+				sessions, ok := s.keys[key.GetName()]
+				if !ok {
+					log.Printf("no sessions registered for key=%s", key.GetName())
+				}
+
+				for session := range sessions {
+					select {
+					case session.sessionChan <- key:
+						log.Printf("session id=%s notified", session.id)
+					default:
+					}
+				}
+				s.mu.Unlock()
 			case <-time.After(s.config.ping_interval):
 				go func() {
 					listener.Ping()
@@ -202,31 +227,66 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 }
 
 func (s *server) Watch(req *pb.WatchRequest, stream pb.PushdbService_WatchServer) error {
-	log.Printf("req: %v\n", req)
-	return s.registerNewWatch(req.GetName(), stream)
+	session, err := s.openSession(req.Keys)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to create new session")
+	}
+
+	for {
+		select {
+		case key := <-session.sessionChan:
+			err := stream.Send(&pb.WatchResponse{Key: key})
+			if err != nil {
+				log.Printf("error sending response on the stream err=%v", err)
+			}
+			log.Printf("notification sent key=%v session=%v", key, session)
+		case <-stream.Context().Done():
+			s.closeSession(session)
+			return nil
+		default:
+		}
+	}
 }
 
-func (s *server) registerNewWatch(name string, stream pb.PushdbService_WatchServer) error {
-	s.mu.Lock()
-	_, ok := s.watches[name]
-	if ok {
-		// watch already exists
-		return errors.New("watch already exists")
-	}
-	s.watches[name] = stream
-	s.mu.Unlock()
-
-	// Block until stream is closed
-	select {
-	case <-stream.Context().Done():
-		return nil
-	}
-}
-
-func (s *server) unregisterWatch(name string) {
+func (s *server) openSession(keys []string) (*session, error) {
+	// TODO make it unbuffered?
+	newSession := &session{keys: keys, sessionChan: make(chan *pb.Key, 1)}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.watches, name)
+	s.sessions[newSession] = struct{}{}
+	for _, key := range keys {
+		sessions, ok := s.keys[key]
+		if !ok {
+			sessions = make(map[*session]struct{}, 0)
+		}
+		sessions[newSession] = struct{}{}
+		s.keys[key] = sessions
+	}
+	log.Printf("opened new session=%v", newSession)
+	return newSession, nil
+}
+
+func (s *server) closeSession(session *session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.sessions[session]
+	if !ok {
+		return errors.New("session not found")
+	}
+	log.Printf("closing session=%v", session)
+	close(session.sessionChan)
+	delete(s.sessions, session)
+	for _, key := range session.keys {
+		keySessions, ok := s.keys[key]
+		if !ok {
+			log.Printf("key=%s for session=%v not found", key, session)
+			continue
+		}
+		delete(keySessions, session)
+	}
+	log.Printf("closed and deleted session=%v", session)
+	session = nil
+	return nil
 }
 
 func main() {
