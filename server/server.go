@@ -51,15 +51,15 @@ type session struct {
 	sessionChan chan *pb.Key
 }
 
-type KeyRow struct {
+type keyRow struct {
 	Name    string `json:name`
 	Value   string `json:value`
 	Version int32  `json:version`
 }
 
-type KeyChangeEvent struct {
+type keyChangeEvent struct {
 	Action string `json:"action"`
-	KeyRow KeyRow `json:"key_row"`
+	KeyRow keyRow `json:"key_row"`
 }
 
 func New(addr string, db string, ping_interval int) *server {
@@ -274,7 +274,7 @@ func (s *server) closeSession(session *session) error {
 }
 
 func jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
-	var keyChangeEvent KeyChangeEvent
+	var keyChangeEvent keyChangeEvent
 	err := json.Unmarshal([]byte(jsonStr), &keyChangeEvent)
 	if err != nil {
 		log.Println(err.Error())
