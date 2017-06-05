@@ -66,9 +66,6 @@ type KeyChangeEvent struct {
 }
 
 func (s *server) start() {
-	// TODO: move me to server.New method
-	s.sessions = make(map[*session]struct{})
-	s.keys = make(map[string]map[*session]struct{})
 	var err error
 	s.db, err = sql.Open("postgres", s.config.db)
 	if err != nil {
@@ -143,6 +140,14 @@ func jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
 		Value:   valueProto,
 		Version: jsonKey.Version,
 	}, nil
+}
+
+func New(db string, ping_interval int) *server {
+	return &server{
+		config: &config{db: db, ping_interval: time.Duration(ping_interval) * time.Second},
+		sessions: make(map[*session]struct{}),
+		keys: make(map[string]map[*session]struct{}),
+	}
 }
 
 func (s *server) Set(ctx context.Context, req *pb.SetRequest) (*pb.SetResponse, error) {
@@ -307,7 +312,7 @@ func main() {
 	}
 	log.Printf("grpc server listening on: %s\n", *addr)
 
-	srv := &server{config: &config{db: *db, ping_interval: time.Duration(*ping_interval) * time.Second}}
+	srv := New(*db, *ping_interval)
 	srv.start()
 
 	grpc := grpc.NewServer()
