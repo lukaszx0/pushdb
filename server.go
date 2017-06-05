@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	pg_chann = "key_change"
+	pgChanName = "key_change"
 )
 
 type server struct {
@@ -81,7 +81,7 @@ func (s *server) start() {
 		}
 	})
 
-	err = listener.Listen(pg_chann)
+	err = listener.Listen(pgChanName)
 	if err != nil {
 		panic(err)
 	}
