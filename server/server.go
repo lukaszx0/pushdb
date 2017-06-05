@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"log"
@@ -6,12 +6,8 @@ import (
 
 	"database/sql"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
-
-	"flag"
-	"os"
 
 	"encoding/hex"
 	"encoding/json"
@@ -64,6 +60,14 @@ type KeyRow struct {
 type KeyChangeEvent struct {
 	Action string `json:"action"`
 	KeyRow KeyRow `json:"key_row"`
+}
+
+func New(addr string, db string, ping_interval int) *server {
+	return &server{
+		config:   &config{addr: addr, db: db, ping_interval: time.Duration(ping_interval) * time.Second},
+		sessions: make(map[*session]struct{}),
+		keys:     make(map[string]map[*session]struct{}),
+	}
 }
 
 func (s *server) Start() {
@@ -122,44 +126,6 @@ func (s *server) Start() {
 	pb.RegisterPushdbServiceServer(grpc, s)
 	if err := grpc.Serve(lis); err != nil {
 		log.Fatalf("failed to serve grpc: %v\n", err)
-	}
-}
-
-func jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
-	var keyChangeEvent KeyChangeEvent
-	err := json.Unmarshal([]byte(jsonStr), &keyChangeEvent)
-	if err != nil {
-		log.Println(err.Error())
-		return nil, err
-	}
-
-	jsonKey := keyChangeEvent.KeyRow
-
-	// Decode hex string (strip off `\x` from the beginning of the string)
-	valueBytes, err := hex.DecodeString(string(jsonKey.Value[2:]))
-	if err != nil {
-		return nil, err
-	}
-
-	// Unmarshal bytes into proto struct
-	valueProto := &pb.Value{}
-	err = proto.Unmarshal(valueBytes, valueProto)
-	if err != nil {
-		return nil, err
-	}
-
-	return &pb.Key{
-		Name:    jsonKey.Name,
-		Value:   valueProto,
-		Version: jsonKey.Version,
-	}, nil
-}
-
-func New(addr string, db string, ping_interval int) *server {
-	return &server{
-		config:   &config{addr: addr, db: db, ping_interval: time.Duration(ping_interval) * time.Second},
-		sessions: make(map[*session]struct{}),
-		keys:     make(map[string]map[*session]struct{}),
 	}
 }
 
@@ -307,18 +273,32 @@ func (s *server) closeSession(session *session) error {
 	return nil
 }
 
-func main() {
-	addr := flag.String("addr", ":5005", "address on which server is listening")
-	db := flag.String("db", "", "database url (eg.: postgres://<user>@<host>:<port>/<database>?sslmode=disable) [required]")
-	ping_interval := flag.Int("ping", 1, "database ping inverval (sec)")
-
-	flag.Parse()
-	if *db == "" {
-		fmt.Printf("missing required -db argument\n\n")
-		flag.Usage()
-		os.Exit(1)
+func jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
+	var keyChangeEvent KeyChangeEvent
+	err := json.Unmarshal([]byte(jsonStr), &keyChangeEvent)
+	if err != nil {
+		log.Println(err.Error())
+		return nil, err
 	}
 
-	srv := New(*addr, *db, *ping_interval)
-	srv.Start()
+	jsonKey := keyChangeEvent.KeyRow
+
+	// Decode hex string (strip off `\x` from the beginning of the string)
+	valueBytes, err := hex.DecodeString(string(jsonKey.Value[2:]))
+	if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal bytes into proto struct
+	valueProto := &pb.Value{}
+	err = proto.Unmarshal(valueBytes, valueProto)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pb.Key{
+		Name:    jsonKey.Name,
+		Value:   valueProto,
+		Version: jsonKey.Version,
+	}, nil
 }
