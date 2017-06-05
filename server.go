@@ -41,6 +41,7 @@ type server struct {
 }
 
 type config struct {
+	addr          string
 	db            string
 	ping_interval time.Duration
 }
@@ -65,7 +66,7 @@ type KeyChangeEvent struct {
 	KeyRow KeyRow `json:"key_row"`
 }
 
-func (s *server) start() {
+func (s *server) Start() {
 	var err error
 	s.db, err = sql.Open("postgres", s.config.db)
 	if err != nil {
@@ -110,6 +111,18 @@ func (s *server) start() {
 			}
 		}
 	}()
+
+	lis, err := net.Listen("tcp", s.config.addr)
+	if err != nil {
+		log.Fatalf("failed to listen: %v\n", err)
+	}
+	log.Printf("grpc server listening on: %s\n", s.config.addr)
+
+	grpc := grpc.NewServer()
+	pb.RegisterPushdbServiceServer(grpc, s)
+	if err := grpc.Serve(lis); err != nil {
+		log.Fatalf("failed to serve grpc: %v\n", err)
+	}
 }
 
 func jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
@@ -142,11 +155,11 @@ func jsonKeyToPbKey(jsonStr string) (*pb.Key, error) {
 	}, nil
 }
 
-func New(db string, ping_interval int) *server {
+func New(addr string, db string, ping_interval int) *server {
 	return &server{
-		config: &config{db: db, ping_interval: time.Duration(ping_interval) * time.Second},
+		config:   &config{addr: addr, db: db, ping_interval: time.Duration(ping_interval) * time.Second},
 		sessions: make(map[*session]struct{}),
-		keys: make(map[string]map[*session]struct{}),
+		keys:     make(map[string]map[*session]struct{}),
 	}
 }
 
@@ -306,18 +319,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	lis, err := net.Listen("tcp", *addr)
-	if err != nil {
-		log.Fatalf("failed to listen: %v\n", err)
-	}
-	log.Printf("grpc server listening on: %s\n", *addr)
-
-	srv := New(*db, *ping_interval)
-	srv.start()
-
-	grpc := grpc.NewServer()
-	pb.RegisterPushdbServiceServer(grpc, srv)
-	if err := grpc.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v\n", err)
-	}
+	srv := New(*addr, *db, *ping_interval)
+	srv.Start()
 }
